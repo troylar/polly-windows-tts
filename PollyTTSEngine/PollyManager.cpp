@@ -24,6 +24,7 @@ permissions and limitations under the License. */
 #include <unordered_map>
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/msvc_sink.h"
+#include <tinyxml2/tinyxml2.h>
 namespace spd = spdlog;
 
 #define NOMINMAX
@@ -58,22 +59,46 @@ PollySpeechResponse PollyManager::GenerateSpeech(CSentItem& item)
 	SynthesizeSpeechRequest speech_request;
 	auto speech_text = Aws::Utils::StringUtils::FromWString(item.pItem);
 	m_logger->debug("{}: Asking Polly for '{}'", __FUNCTION__, speech_text.c_str());
-	speech_request.SetOutputFormat(OutputFormat::pcm);
-	speech_request.SetVoiceId(m_vVoiceId);
-	char polly_text[10000];
-
-	m_logger->debug("Generating speech: {}", speech_text);
-	speech_request.SetText(speech_text);
 	if (Aws::Utils::StringUtils::ToLower(speech_text.c_str()).find("<speak") == 0)
 	{
 		m_logger->debug("Text type = ssml");
 		speech_request.SetTextType(TextType::ssml);
+		tinyxml2::XMLDocument sapiDoc;
+		auto xml = sapiDoc.Parse(speech_text.c_str());
+		auto elem = sapiDoc.RootElement();
+		std::string voiceName;
+		while (elem)
+		{
+			if (!std::string(elem->Value()).compare("voice"))
+			{
+				voiceName = elem->ToElement()->Attribute("name");
+			}
+			if (elem->FirstChildElement()) {
+				elem = elem->FirstChildElement();
+			}
+			else if (elem->NextSiblingElement()) {
+				elem = elem->NextSiblingElement();
+			}
+			else {
+				while (!elem->Parent()->NextSiblingElement()) {
+					if (elem->Parent()->ToElement() != sapiDoc.RootElement()) {
+						elem = elem->Parent()->NextSiblingElement();
+					}
+				}
+			}
+		}
+
 	}
 	else
 	{
 		m_logger->debug("Text type = text");
 		speech_request.SetTextType(TextType::text);
 	}
+	speech_request.SetOutputFormat(OutputFormat::pcm);
+	speech_request.SetVoiceId(m_vVoiceId);
+
+	m_logger->debug("Generating speech: {}", speech_text);
+	speech_request.SetText(speech_text);
 
 	speech_request.SetSampleRate("16000");
 	auto speech = p.SynthesizeSpeech(speech_request);
