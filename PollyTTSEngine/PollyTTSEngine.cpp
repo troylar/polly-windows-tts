@@ -12,6 +12,9 @@ permissions and limitations under the License. */
 
 #include "stdafx.h"
 #include "PollyTTSEngine.h"
+#include "PollyTTSEngine_i.c"
+#include "resource.h"
+#include <initguid.h>
 #include "TtsEngObj.h"
 
 

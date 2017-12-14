@@ -159,7 +159,7 @@ STDMETHODIMP CTTSEngObj::Speak( DWORD dwSpeakFlags,
         m_pEndChar    = m_pNextChar + m_pCurrFrag->ulTextLen;
         m_ullAudioOff = 0;
 
-        CItemList ItemList;
+	        CItemList ItemList;
 
 		m_logger->debug("Starting work processing\n");
 		while( SUCCEEDED( hr ) && !(pOutputSite->GetActions() & SPVES_ABORT) )
@@ -244,6 +244,12 @@ HRESULT CTTSEngObj::OutputSentence( CItemList& ItemList, ISpTTSEngineSite* pOutp
 
 	ListPos = ItemList.GetHeadPosition();
 	PollyManager pm = PollyManager(m_pPollyVoice);
+	auto speech_text = Aws::Utils::StringUtils::FromWString(Item.pItem);
+	if (speech_text[0] == '<' && Aws::Utils::StringUtils::ToLower(speech_text.c_str()).find("<speak") != 0)
+	{
+		return S_OK;
+	}
+
 	auto resp = pm.GenerateSpeech(Item);
 	if (!resp.IsSuccess)
 	{
@@ -252,112 +258,9 @@ HRESULT CTTSEngObj::OutputSentence( CItemList& ItemList, ISpTTSEngineSite* pOutp
 		MessageBoxA(NULL, message.str().c_str(), "Error", MB_OK);
 		return FAILED(ERROR_SUCCESS);
 	}
-	PollySpeechMarksResponse generateSpeechMarksResp = pm.GenerateSpeechMarks(Item, resp.Length);
-	
+
 	hr = pOutputSite->Write(reinterpret_cast<char*>(&resp.AudioData[0]), resp.Length, NULL);
 	return hr;
-	auto i = generateSpeechMarksResp.SpeechMarks.begin();
-	auto wordOffset = 0;
-    while(ListPos && i != generateSpeechMarksResp.SpeechMarks.end() && !(pOutputSite->GetActions() & SPVES_ABORT) )
-    {
-		SpeechMark sm = *i;
-        CSentItem& Item = ItemList.GetNext( ListPos );
-		m_logger->debug("ListPos={}, current word={}", ListPos, sm.Text);
-
-
-        //--- Process sentence items
-		switch( Item.pXmlState->eAction )
-        {
-          //--- Speak some text ---------------------------------------
-          case SPVA_Speak:
-          {
-            if( iswalpha( Item.pItem[0] ) || iswdigit( Item.pItem[0] ) )
-            {
-				//--- Queue the event
-                CSpEvent Event;
-                Event.eEventId             = SPEI_WORD_BOUNDARY;
-                Event.elParamType          = SPET_LPARAM_IS_UNDEFINED;
-                Event.ullAudioStreamOffset = wordOffset;
-				Event.lParam               = Item.ulItemSrcOffset,
-                Event.wParam               = sm.Text.length();
-				m_logger->debug("Writing word boundary for '{}', offset={}, length={}", sm.Text, Item.ulItemSrcOffset, sm.Text.length());
-                pOutputSite->AddEvents( &Event, 1 );
-
-				std::vector<unsigned char> word = std::vector<unsigned char>(&resp.AudioData[wordOffset], &resp.AudioData[wordOffset + sm.LengthInBytes]);
-				hr = pOutputSite->Write(reinterpret_cast<char*>(&word[0]), sm.LengthInBytes, NULL);
-				++i;
-				m_ullAudioOff += sm.LengthInBytes;
-				wordOffset += sm.LengthInBytes;
-			}
-          }
-          break;
-
-          //--- Output some silence for a pause -----------------------
-          case SPVA_Silence:
-          {
-            BYTE Buff[1000];
-            memset( Buff, 0, 1000 );
-            ULONG NumSilenceBytes = Item.pXmlState->SilenceMSecs * 22;
-
-            //--- Queue the audio data in chunks so that we can get
-            //    interrupted if necessary.
-            while( !(pOutputSite->GetActions() & SPVES_ABORT) )
-            {
-                if( NumSilenceBytes > 1000 )
-                {
-                    hr = pOutputSite->Write( Buff, 1000, NULL );
-                    NumSilenceBytes -= 1000;
-                }
-                else
-                {
-                    hr = pOutputSite->Write( Buff, NumSilenceBytes, NULL );
-                    break;
-                }
-            }
-
-            //--- Update the audio offset
-            m_ullAudioOff += NumSilenceBytes;
-          }
-          break;
-
-          //--- Fire a bookmark event ---------------------------------
-          case SPVA_Bookmark:
-          {
-            //--- The bookmark is NOT a null terminated string in the Item, but we need
-            //--- to convert it to one.  Allocate enough space for the string.
-            WCHAR * pszBookmark = (WCHAR *)_malloca((Item.ulItemLen + 1) * sizeof(WCHAR));
-            memcpy(pszBookmark, Item.pItem, Item.ulItemLen * sizeof(WCHAR));
-            pszBookmark[Item.ulItemLen] = 0;
-            //--- Queue the event
-            SPEVENT Event;
-            Event.eEventId             = SPEI_TTS_BOOKMARK;
-            Event.elParamType          = SPET_LPARAM_IS_STRING;
-            Event.ullAudioStreamOffset = m_ullAudioOff;
-            Event.lParam               = (LPARAM)pszBookmark;
-            Event.wParam               = _wtol(pszBookmark);
-            hr = pOutputSite->AddEvents( &Event, 1 );
-            //--- Free the space for the string.
-            _freea(pszBookmark);
-          }
-          break;
-
-          case SPVA_Pronounce:
-            //--- Our sample engine doesn't handle this. If it
-            //    did, you would use the associated pronunciation in
-            //    the XmlState structure instead of the lexicon.
-            break;
-
-          case SPVA_ParseUnknownTag:
-            //--- This will reference an XML tag that is unknown to SAPI
-            //    if your engine has private tags to control state, you
-            //    would examine these tags and see if you recognize it. This
-            //    would also be the point that you would make the rendering
-            //    state change.
-            break;
-        }
-    }
-
-    return hr;
 } /* CTTSEngObj::OutputSentence */
 
 /*****************************************************************************

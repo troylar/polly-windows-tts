@@ -64,14 +64,35 @@ PollySpeechResponse PollyManager::GenerateSpeech(CSentItem& item)
 		m_logger->debug("Text type = ssml");
 		speech_request.SetTextType(TextType::ssml);
 		tinyxml2::XMLDocument sapiDoc;
-		auto xml = sapiDoc.Parse(speech_text.c_str());
-		auto elem = sapiDoc.RootElement();
+		sapiDoc.Parse(speech_text.c_str());
+		auto elem = sapiDoc.FirstChildElement("speak");
 		std::string voiceName;
 		while (elem)
 		{
 			if (!std::string(elem->Value()).compare("voice"))
 			{
 				voiceName = elem->ToElement()->Attribute("name");
+				std::wstring wname;
+				wname.assign(voiceName.begin(), voiceName.end());
+				auto voiceId = vm.find(wname);
+				m_vVoiceId = voiceId->second;
+				m_logger->debug(elem->Value());
+				auto child = elem->FirstChild();
+				while (child)
+				{
+					m_logger->debug(child->Value());
+					sapiDoc.RootElement()->InsertFirstChild(child);
+					if (child->NextSibling() && std::string(child->NextSibling()->Value()).compare("voice"))
+					{
+						child = child->NextSibling();
+					}
+					else
+					{
+						sapiDoc.RootElement()->DeleteChild(elem);
+						child = NULL;
+					}
+				}
+						break;
 			}
 			if (elem->FirstChildElement()) {
 				elem = elem->FirstChildElement();
@@ -80,14 +101,16 @@ PollySpeechResponse PollyManager::GenerateSpeech(CSentItem& item)
 				elem = elem->NextSiblingElement();
 			}
 			else {
-				while (!elem->Parent()->NextSiblingElement()) {
+				while (elem && !elem->Parent()->NextSiblingElement()) {
 					if (elem->Parent()->ToElement() != sapiDoc.RootElement()) {
 						elem = elem->Parent()->NextSiblingElement();
 					}
 				}
 			}
 		}
-
+		tinyxml2::XMLPrinter printer;
+		sapiDoc.Print(&printer);
+		speech_text = printer.CStr();
 	}
 	else
 	{
